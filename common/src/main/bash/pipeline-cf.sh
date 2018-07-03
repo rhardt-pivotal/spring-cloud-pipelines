@@ -3,6 +3,7 @@
 #set -e
 
 function logInToPaas() {
+	exportKeyValProperties
 	local user="PAAS_${ENVIRONMENT}_USERNAME"
 	local cfUsername="${!user}"
 	local pass="PAAS_${ENVIRONMENT}_PASSWORD"
@@ -13,7 +14,7 @@ function logInToPaas() {
 	if [[ "${LOWERCASE_ENV}" == "test" ]]; then
 		local appName
 		appName=$(retrieveAppName)
-		cfSpace="${PAAS_TEST_SPACE_PREFIX}-${appName}"
+		cfSpace="${PASSED_TEST_SPACE_PREFIX}-${appName}"
 	else
 		local space="PAAS_${ENVIRONMENT}_SPACE"
 		cfSpace="${!space}"
@@ -32,7 +33,11 @@ function logInToPaas() {
 
 	echo "Logging in to CF to org [${cfOrg}], space [${cfSpace}]"
 	"${CF_BIN}" api --skip-ssl-validation "${apiUrl}"
-	"${CF_BIN}" login -u "${cfUsername}" -p "${cfPassword}" -o "${cfOrg}" -s "${cfSpace}"
+	# "${CF_BIN}" login -u "${cfUsername}" -p "${cfPassword}" -o "${cfOrg}" # -s "${cfSpace}"
+	"${CF_BIN}" auth "${cfUsername}" "${cfPassword}" # -o "${cfOrg}"  -s "${cfSpace}"
+	"${CF_BIN}" target -o "${cfOrg}"
+	"${CF_BIN}" create-space "${cfSpace}"
+	"${CF_BIN}" target -s "${cfSpace}"
 }
 
 function testCleanup() {
@@ -51,6 +56,9 @@ function deleteService() {
 }
 
 function testDeploy() {
+	echo "NEW TEST DEPLOY"
+	exportKeyValProperties
+
 	# TODO: Consider making it less JVM specific
 	local projectGroupId
 	projectGroupId=$(retrieveGroupId)
@@ -67,6 +75,27 @@ function testDeploy() {
 	downloadAppBinary "${REPO_WITH_BINARIES}" "${projectGroupId}" "${appName}" "${PIPELINE_VERSION}"
 	deployAndRestartAppWithName "${appName}" "${appName}-${PIPELINE_VERSION}"
 	propagatePropertiesForTests "${appName}"
+}
+
+function deletePhoenixTestSpace() {
+	echo "DELETE PHOENIX TEST SPACE"
+	exportKeyValProperties
+
+	# TODO: Consider making it less JVM specific
+	local projectGroupId
+	projectGroupId=$(retrieveGroupId)
+	local appName
+	appName=$(retrieveAppName)
+	echo "APPNAME: ${appName}"
+
+	logInToPaas
+	
+	echo "going to delete space ${PASSED_TEST_SPACE_PREFIX}-${appName}"
+
+	"${CF_BIN}" delete-space -f "${PASSED_TEST_SPACE_PREFIX}-${appName}"
+
+	echo "done"
+
 }
 
 function testRollbackDeploy() {

@@ -61,8 +61,6 @@ jobs:
   - aggregate:
     - get: tools
     - get: version
-    - get: repo
-      trigger: true
   - task: generate-version
     privileged: true
     file: tools/concourse/tasks/generate-version/task.yml
@@ -115,7 +113,6 @@ jobs:
       file: keyvalout/keyval.properties
   - put: code-analysis
     params:
-      SONAR_RUNNER_OPTS: "-Xmx2048m -XX:MaxPermSize=512m"
       project_path: sonarqube-analysis-input
       sources: 
       - ./src/main/java
@@ -125,10 +122,6 @@ jobs:
       additional_properties:
         # Will be passed as "-Dsonar.javascript.lcov.reportPaths="coverage/lcov.info" to the scanner.
         sonar.javascript.lcov.reportPaths: coverage/lcov.info
-        sonar.web.javaOpts: "-Xmx2048m -Xms512m -XX:MaxPermSize=512m"
-        sonar.ce.javaOpts: "-Xmx2048m -Xms512m -XX:MaxPermSize=512m" 
-        sonar.search.javaOpts: "-Xmx2048m -Xms512m -XX:MaxPermSize=512m"
-        sonar.skipPackageDesign: "true"
 
 - name: qualitygate
   plan:
@@ -188,28 +181,6 @@ jobs:
     params:
       file: keyvalout/keyval.properties
 
-- name: create-phoenix-test-space-name
-  serial: true
-  public: false
-  plan:
-  - aggregate:
-    - get: tools
-    - get: repo
-    - get: keyval
-      passed:
-      - build-api-compatibility-check
-      trigger: true
-  - task: save-prefix
-    privileged: true
-    file: tools/concourse/tasks/create-phoenix-env/task.yml
-    params:
-      MESSAGE: "Creating an ephemeral phoenix test space name"
-      <<: *common-params
-      <<: *paas-test-params
-  - put: keyval
-    params:
-      file: keyvalout/keyval.properties      
-
 - name: test-deploy
   serial: true
   public: false
@@ -219,7 +190,7 @@ jobs:
     - get: repo
     - get: keyval
       passed:
-      - create-phoenix-test-space-name
+      - build-api-compatibility-check
       trigger: true
   - task: test-deploy
     privileged: true
@@ -304,31 +275,6 @@ jobs:
     params:
       file: keyvalout/keyval.properties
 
-- name: destroy-phoenix-test-space-name
-  serial: true
-  public: false
-  plan:
-  - aggregate:
-    - get: tools
-    - get: repo
-    - get: keyval
-      passed:
-      - test-rollback-smoke
-      trigger: true
-  - task: delete-space
-    privileged: true
-    file: tools/concourse/task.yml
-    params:
-      MESSAGE: "Destroying Phoenix Test Space"
-      SCRIPT_TO_RUN: "delete-phoenix-test-space.sh"
-      <<: *common-params
-      <<: *paas-test-params
-      PAAS_HOSTNAME_UUID: ((paas-hostname-uuid))
-  - put: keyval
-    params:
-      file: keyval/keyval.properties     
-
-
 - name: stage-deploy
   serial: true
   public: false
@@ -338,7 +284,7 @@ jobs:
     - get: repo
     - get: keyval
       passed:
-      - destroy-phoenix-test-space-name
+      - test-rollback-smoke
       trigger: true
   - task: stage-deploy
     privileged: true
@@ -378,18 +324,29 @@ jobs:
 
 - name: slack-job
   plan:
-  - get: keyval
-    passed:
-    - stage-e2e
-    trigger: true
+  - aggregate:
+    - get: keyval
+      passed:
+      - stage-e2e
+      trigger: true
   - put: slack-alert
     params:
       text: |
-        <!channel> fortune-service staging E2E Succeeded.  Going to production in 15 minutes!:
+        fortune-service staging E2E Succeeded.  Going to production in 15 minutes!:
         To halt, respond with:
         <@UBKJFT7E0> stop $BUILD_ID
       silent: false
       always_notify: true
+  - put: keyval
+    params:
+      file: keyval/keyval.properties
+
+- name: wait-for-active-deny
+  plan:
+  - get: keyval
+    passed:
+    - slack-job
+    trigger: true
   - task: sleep
     config: 
       platform: linux
@@ -403,13 +360,14 @@ jobs:
   - put: slack-alert
     params:
       text: |
-        <!channel> No active deny received.  Continuing
-
+        No active deny received.  Continuing
       silent: false
       always_notify: true
   - put: keyval
     params:
       file: keyval/keyval.properties
+
+
 
 - name: prod-deploy
   serial: true
@@ -420,7 +378,7 @@ jobs:
     - get: repo
     - get: keyval
       passed:
-      - slack-job
+      - wait-for-active-deny
       trigger: true
   - task: prod-deploy
     privileged: true
