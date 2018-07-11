@@ -26,7 +26,7 @@ resources:
 - name: slack-alert
   type: slack-notification
   source:
-    url: https://hooks.slack.com/services/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
+    url: https://hooks.slack.com/services/8675309/jenny/dontlosemynumber
 
 - name: code-analysis
   type: sonar-runner
